@@ -5,6 +5,30 @@ import { motion } from "framer-motion";
 import { FolderOpen, ImageIcon, Upload } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
+// Module augmentation: add webkitdirectory to React's input attributes
+declare module "react" {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  interface InputHTMLAttributes<T> {
+    webkitdirectory?: string;
+  }
+}
+
+// --- Type guards (let TS infer narrowed types instead of casting) ---
+
+function isFileEntry(
+  entry: FileSystemEntry
+): entry is FileSystemFileEntry {
+  return entry.isFile;
+}
+
+function isDirectoryEntry(
+  entry: FileSystemEntry
+): entry is FileSystemDirectoryEntry {
+  return entry.isDirectory;
+}
+
+// --- Component ---
+
 interface FolderPickerProps {
   onPhotosSelected: (files: File[]) => void;
 }
@@ -14,38 +38,6 @@ export function FolderPicker({ onPhotosSelected }: FolderPickerProps) {
   const [dragOver, setDragOver] = useState(false);
   const folderInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  const supportsDirectoryPicker =
-    typeof window !== "undefined" && "showDirectoryPicker" in window;
-
-  const handleDirectoryPicker = useCallback(async () => {
-    if (!supportsDirectoryPicker) return;
-    setIsLoading(true);
-    try {
-      const dirHandle = await (
-        window as unknown as {
-          showDirectoryPicker: () => Promise<FileSystemDirectoryHandle>;
-        }
-      ).showDirectoryPicker();
-      const files: File[] = [];
-      for await (const entry of dirHandle.values()) {
-        if (entry.kind === "file") {
-          const file = await entry.getFile();
-          files.push(file);
-        }
-      }
-      if (files.length > 0) {
-        onPhotosSelected(files);
-      }
-    } catch (err) {
-      // User cancelled the picker
-      if ((err as Error).name !== "AbortError") {
-        console.error("Error reading directory:", err);
-      }
-    } finally {
-      setIsLoading(false);
-    }
-  }, [supportsDirectoryPicker, onPhotosSelected]);
 
   const handleFileInput = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -72,15 +64,15 @@ export function FolderPicker({ onPhotosSelected }: FolderPickerProps) {
 
       // Try to read directories recursively via webkitGetAsEntry
       const readEntry = async (entry: FileSystemEntry): Promise<void> => {
-        if (entry.isFile) {
-          const fileEntry = entry as FileSystemFileEntry;
+        if (isFileEntry(entry)) {
+          // entry is narrowed to FileSystemFileEntry
           const file = await new Promise<File>((resolve, reject) =>
-            fileEntry.file(resolve, reject)
+            entry.file(resolve, reject)
           );
           files.push(file);
-        } else if (entry.isDirectory) {
-          const dirEntry = entry as FileSystemDirectoryEntry;
-          const reader = dirEntry.createReader();
+        } else if (isDirectoryEntry(entry)) {
+          // entry is narrowed to FileSystemDirectoryEntry
+          const reader = entry.createReader();
           const entries = await new Promise<FileSystemEntry[]>(
             (resolve, reject) => reader.readEntries(resolve, reject)
           );
@@ -169,29 +161,16 @@ export function FolderPicker({ onPhotosSelected }: FolderPickerProps) {
           </div>
 
           <div className="flex flex-col sm:flex-row gap-3 w-full">
-            {/* Open Folder — native File System Access API (Chrome/Edge) */}
-            {supportsDirectoryPicker ? (
-              <Button
-                onClick={handleDirectoryPicker}
-                disabled={isLoading}
-                className="flex-1"
-                size="lg"
-              >
-                <FolderOpen className="size-4" />
-                Open Folder
-              </Button>
-            ) : (
-              /* Fallback folder picker using webkitdirectory */
-              <Button
-                onClick={() => folderInputRef.current?.click()}
-                disabled={isLoading}
-                className="flex-1"
-                size="lg"
-              >
-                <FolderOpen className="size-4" />
-                Open Folder
-              </Button>
-            )}
+            {/* Open Folder — uses stable <input webkitdirectory> */}
+            <Button
+              onClick={() => folderInputRef.current?.click()}
+              disabled={isLoading}
+              className="flex-1"
+              size="lg"
+            >
+              <FolderOpen className="size-4" />
+              Open Folder
+            </Button>
 
             {/* Select individual files */}
             <Button
@@ -212,7 +191,6 @@ export function FolderPicker({ onPhotosSelected }: FolderPickerProps) {
           ref={folderInputRef}
           type="file"
           multiple
-          // @ts-expect-error webkitdirectory is not in the standard types
           webkitdirectory=""
           onChange={handleFileInput}
           className="hidden"
